@@ -16,6 +16,7 @@
     "sizecheck": "npx vite-bundle-visualizer"
   },
   "dependencies": {
+    "@amap/amap-jsapi-loader": "catalog:frontend",
     "@unhead/vue": "catalog:frontend",
     "@unocss/reset": "catalog:frontend",
     "@vueuse/core": "catalog:frontend",
