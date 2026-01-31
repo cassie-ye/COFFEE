@@ -46,11 +46,12 @@ const route = useRoute()
 /** 初始化地图（动态 import 避免 SSG 时 Node 无 window） */
 async function initMap() {
   const { default: AMapLoader } = await import('@amap/amap-jsapi-loader')
-  window._AMapSecurityConfig = {
-    securityJsCode: 'bf61b5b8457d13555c3d9e36321102b1',
-  }
+  const amapKey = import.meta.env.VITE_AMAP_KEY
+  if (!amapKey)
+    return Promise.reject(new Error('Missing VITE_AMAP_KEY'))
+  window._AMapSecurityConfig = { securityJsCode: amapKey }
   return AMapLoader.load({
-    key: 'bf61b5b8457d13555c3d9e36321102b1',
+    key: amapKey,
     version: '2.0',
     plugins: ['AMap.Scale', 'AMap.MarkerCluster', 'AMap.Geolocation'],
   })
@@ -492,7 +493,7 @@ function locateToCurrentPosition() {
           Find me:
           <div class="flex items-center gap-1">
             <a
-              href="https://github.com/cassie-ye"
+              href="https://github.com/JoiePink"
               target="_blank"
               rel="noopener noreferrer"
               class="icon-link"
