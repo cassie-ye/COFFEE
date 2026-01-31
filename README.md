@@ -11,5 +11,5 @@
 - 📋 show the details of each Starbucks store, such as position details, business hours, store type, store tags, etc.
 - 🌓 support two themes: dark and light
 
-If you find this project helpful, consider giving it a ⭐ star on the [GitHub repository](https://github.com/your-username/COFFEE).  
+If you find this project helpful, consider giving it a ⭐ star on the [GitHub repository](https://github.com/JoiePink/Coffee).
 Issues and pull requests are always welcome!

@@ -11,5 +11,5 @@
 - 📋 展示每家星巴克门店的详情，如地址、营业时间、门店类型、门店标签等
 - 🌓 支持深色与浅色两种主题
 
-如果这个项目对你有帮助，欢迎在 [GitHub 仓库](https://github.com/your-username/COFFEE) 点个 ⭐ Star。
+如果这个项目对你有帮助，欢迎在 [GitHub 仓库](https://github.com/JoiePink/Coffee) 点个 ⭐ Star。
 也欢迎提 Issue 和 Pull Request！
