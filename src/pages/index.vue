@@ -1,6 +1,4 @@
 <script setup>
-import AMapLoader from '@amap/amap-jsapi-loader'
-
 const map = ref(null)
 const currentLocationMarker = ref(null)
 const geolocation = ref(null)
@@ -45,8 +43,9 @@ const amapNavUrl = computed(() => {
 })
 const route = useRoute()
 
-/** 初始化地图 */
-function initMap() {
+/** 初始化地图（动态 import 避免 SSG 时 Node 无 window） */
+async function initMap() {
+  const { default: AMapLoader } = await import('@amap/amap-jsapi-loader')
   window._AMapSecurityConfig = {
     securityJsCode: 'bf61b5b8457d13555c3d9e36321102b1',
   }
