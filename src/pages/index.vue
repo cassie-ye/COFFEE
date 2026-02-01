@@ -6,6 +6,9 @@ const geolocation = shallowRef(null)
 const Amap = shallowRef(null)
 const show = ref(false)
 const authorPopupShow = ref(false)
+/** 作者弹层内头像是否已加载完成，用于显示 loading */
+const authorImgLoaded = ref(false)
+const authorImgRef = ref(null)
 const list = ref([])
 const currentStore = ref({})
 const pointList = ref([])
@@ -128,8 +131,7 @@ function onSearchListLoad() {
   const full = searchFilteredList.value
   const start = searchDisplayList.value.length
   const nextBatch = full.slice(start, start + SEARCH_PAGE_SIZE)
-  for (const item of nextBatch)
-    searchDisplayList.value.push(item)
+  for (const item of nextBatch) searchDisplayList.value.push(item)
   searchListLoading.value = false
   if (searchDisplayList.value.length >= full.length)
     searchListFinished.value = true
@@ -146,6 +148,17 @@ watch(searchPopupShow, (open) => {
 watch(searchKeyword, () => {
   if (searchPopupShow.value)
     nextTick(resetSearchDisplayList)
+})
+
+/** 作者弹层打开时重置头像 loading；若图片已缓存则不再触发 load，需在 nextTick 检查 complete */
+watch(authorPopupShow, (open) => {
+  if (open) {
+    authorImgLoaded.value = false
+    nextTick(() => {
+      if (authorImgRef.value?.complete)
+        authorImgLoaded.value = true
+    })
+  }
 })
 
 function openSearchPopup() {
@@ -166,12 +179,22 @@ function openSearchPopup() {
 function onSelectStoreFromSearch(store) {
   searchPopupShow.value = false
   currentStore.value = store
-  if (map.value && store?.coordinates?.longitude != null && store?.coordinates?.latitude != null) {
-    map.value.setZoomAndCenter(18, [store.coordinates.longitude, store.coordinates.latitude], false)
+  if (
+    map.value
+    && store?.coordinates?.longitude != null
+    && store?.coordinates?.latitude != null
+  ) {
+    map.value.setZoomAndCenter(
+      18,
+      [store.coordinates.longitude, store.coordinates.latitude],
+      false,
+    )
   }
-  // nextTick(() => {
-  //   show.value = true
-  // })
+  nextTick(() => {
+    setTimeout(() => {
+      show.value = true
+    }, 2000)
+  })
 }
 
 /** 初始化地图（动态 import 避免 SSG 时 Node 无 window） */
@@ -281,11 +304,12 @@ function onGeolocationError(data) {
 /** 两经纬度点之间的球面距离（km），Haversine 公式 */
 function haversineKm(lat1, lng1, lat2, lng2) {
   const R = 6371
-  const toRad = d => d * Math.PI / 180
+  const toRad = d => (d * Math.PI) / 180
   const dLat = toRad(lat2 - lat1)
   const dLng = toRad(lng2 - lng1)
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  const a
+    = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return R * c
 }
@@ -301,7 +325,11 @@ const nearestStoresWithDistance = computed(() => {
     .filter(s => s.coordinates?.latitude != null && s.coordinates?.longitude != null)
     .map(store => ({
       store,
-      distance: Math.round(haversineKm(lat, lng, store.coordinates.latitude, store.coordinates.longitude) * 10) / 10,
+      distance:
+        Math.round(
+          haversineKm(lat, lng, store.coordinates.latitude, store.coordinates.longitude)
+          * 10,
+        ) / 10,
     }))
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 10)
@@ -311,22 +339,37 @@ const nearestStoresWithDistance = computed(() => {
 const searchListDisplay = computed(() => {
   if (searchKeyword.value) {
     const loc = currentLocation.value
-    return searchDisplayList.value.map((store) => {
-      let distance
-      if (loc?.length >= 2 && store.coordinates?.latitude != null && store.coordinates?.longitude != null)
-        distance = Math.round(haversineKm(loc[1], loc[0], store.coordinates.latitude, store.coordinates.longitude) * 10) / 10
-      return { store, distance }
-    }).sort((a, b) => {
-      const da = a.distance
-      const db = b.distance
-      if (da == null && db == null)
-        return 0
-      if (da == null)
-        return 1
-      if (db == null)
-        return -1
-      return da - db
-    })
+    return searchDisplayList.value
+      .map((store) => {
+        let distance
+        if (
+          loc?.length >= 2
+          && store.coordinates?.latitude != null
+          && store.coordinates?.longitude != null
+        ) {
+          distance
+            = Math.round(
+              haversineKm(
+                loc[1],
+                loc[0],
+                store.coordinates.latitude,
+                store.coordinates.longitude,
+              ) * 10,
+            ) / 10
+        }
+        return { store, distance }
+      })
+      .sort((a, b) => {
+        const da = a.distance
+        const db = b.distance
+        if (da == null && db == null)
+          return 0
+        if (da == null)
+          return 1
+        if (db == null)
+          return -1
+        return da - db
+      })
   }
   return nearestStoresWithDistance.value
 })
@@ -454,8 +497,8 @@ function updateClusterByViewport(AmapInstance) {
     return
   const inBounds = pointList.value.filter((point) => {
     const ll = point.lnglat
-    const lng = Array.isArray(ll) ? ll[0] : (ll?.lng ?? ll?.longitude)
-    const lat = Array.isArray(ll) ? ll[1] : (ll?.lat ?? ll?.latitude)
+    const lng = Array.isArray(ll) ? ll[0] : ll?.lng ?? ll?.longitude
+    const lat = Array.isArray(ll) ? ll[1] : ll?.lat ?? ll?.latitude
     return lng != null && lat != null && b.contains(new AmapInstance.LngLat(lng, lat))
   })
   pointsInBounds.value = inBounds
@@ -467,7 +510,12 @@ function updateClusterByViewport(AmapInstance) {
   if (!inBounds.length)
     return
   const myList = inBounds.map(point => ({
-    lnglat: Array.isArray(point.lnglat) ? point.lnglat : [point.lnglat?.lng ?? point.lnglat?.longitude, point.lnglat?.lat ?? point.lnglat?.latitude],
+    lnglat: Array.isArray(point.lnglat)
+      ? point.lnglat
+      : [
+          point.lnglat?.lng ?? point.lnglat?.longitude,
+          point.lnglat?.lat ?? point.lnglat?.latitude,
+        ],
     id: point.id,
   }))
   const gridSize = 60
@@ -492,7 +540,10 @@ function loadAndRenderStores(AmapInstance) {
       updateClusterByViewport(AmapInstance)
       if (map.value && !viewportListenersBound) {
         viewportListenersBound = true
-        const onViewportChange = useDebounceFn(() => updateClusterByViewport(Amap.value), 150)
+        const onViewportChange = useDebounceFn(
+          () => updateClusterByViewport(Amap.value),
+          150,
+        )
         map.value.on('moveend', onViewportChange)
         map.value.on('zoomend', onViewportChange)
       }
@@ -594,10 +645,14 @@ onMounted(() => {
 
 watch(isDark, () => {
   const p = applyMapStyle()
-  if (p)
-    p.finally(() => { themeChanging.value = false })
-  else
+  if (p) {
+    p.finally(() => {
+      themeChanging.value = false
+    })
+  }
+  else {
     themeChanging.value = false
+  }
 })
 
 /** 定位到当前位置：请求定位后居中并更新蓝色标记，复用 onGeolocationComplete / onGeolocationError */
@@ -612,6 +667,45 @@ function locateToCurrentPosition() {
       onGeolocationError(result)
     }
   })
+}
+
+/** 缩放/视野范围选项（米），用于 picker 选择 */
+const columns = [
+  { text: '1~2km', value: 1500 },
+  { text: '2~5km', value: 3500 },
+  { text: '5~10km', value: 7500 },
+  { text: '10~20km', value: 15000 },
+  { text: '20~50km', value: 35000 },
+  { text: '50~100km', value: 75000 },
+  { text: '100~200km', value: 150000 },
+  { text: '全国', value: 5000000 },
+]
+/** 视野范围 value（米）对应的高德 zoom 级别（中心不变，只改缩放） */
+const scaleValueToZoom = {
+  1500: 16,
+  3500: 15,
+  7500: 14,
+  15000: 13,
+  35000: 12,
+  75000: 11,
+  150000: 10,
+  5000000: 4,
+}
+const fieldValue = ref('')
+const showPicker = ref(false)
+const pickerValue = ref([])
+function onConfirm({ selectedValues, selectedOptions }) {
+  showPicker.value = false
+  pickerValue.value = selectedValues
+  fieldValue.value = selectedOptions[0].text
+  if (!map.value)
+    return
+  const value = selectedOptions[0]?.value
+  const zoom = scaleValueToZoom[value] ?? map.value.getZoom()
+  const center = map.value.getCenter()
+  const centerArr = center ? [center.lng, center.lat] : undefined
+  if (centerArr)
+    map.value.setZoomAndCenter(zoom, centerArr, true)
 }
 </script>
 
@@ -675,6 +769,9 @@ function locateToCurrentPosition() {
         <div class="icon-link" @click="locateToCurrentPosition">
           <div class="i-carbon-location-heart text-xl text-gray-700 dark:text-gray-300" />
         </div>
+        <div class="icon-link" @click="showPicker = true">
+          <div class="i-carbon-zoom-area text-xl text-gray-700 dark:text-gray-300" />
+        </div>
       </div>
     </div>
     <div class="relative mt-3rem h-[calc(100vh-3rem)] w-full">
@@ -687,12 +784,12 @@ function locateToCurrentPosition() {
         >
           <div class="min-w-0">
             <div class="flex items-baseline gap-1.5">
-              <span class="text-lg text-[#00704A] font-bold tabular-nums dark:text-green-400">
+              <span
+                class="text-lg text-[#00704A] font-bold tabular-nums dark:text-green-400"
+              >
                 {{ pointsInBounds.length }}
               </span>
-              <span class="text-xs text-gray-700 dark:text-gray-300">
-                家门店
-              </span>
+              <span class="text-xs text-gray-700 dark:text-gray-300"> 家门店 </span>
             </div>
           </div>
         </div>
@@ -807,7 +904,9 @@ function locateToCurrentPosition() {
             <div class="i-carbon-arrow-left text-xl text-gray-800 dark:text-gray-200" />
           </div>
           <div class="flex items-center gap-2">
-            <div class="i-line-md-coffee-loop text-2xl text-gray-800 dark:text-gray-200" />
+            <div
+              class="i-line-md-coffee-loop text-2xl text-gray-800 dark:text-gray-200"
+            />
             <div class="text-gray-900 font-bold dark:text-gray-100">
               搜索门店
             </div>
@@ -840,21 +939,38 @@ function locateToCurrentPosition() {
                 {{ item.store.name }}
               </p>
               <div class="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                {{ item.store.address?.streetAddressLine3 || item.store.address?.city || '—' }}
+                {{
+                  item.store.address?.streetAddressLine3
+                    || item.store.address?.city
+                    || "—"
+                }}
               </div>
               <div class="mt-1 flex items-center gap-2 text-xs">
-                <span v-if="item.distance != null" class="text-amber-600 dark:text-amber-400">{{ index === 0 ? `离您最近 ${item.distance}` : item.distance }} km</span>
-                <div v-if="item.store.features?.length" class="text-green-700 font-bold dark:text-green-400">
-                  {{ item.store.features.join(' ') }}
+                <span
+                  v-if="item.distance != null"
+                  class="text-amber-600 dark:text-amber-400"
+                >{{
+                  index === 0 ? `离您最近 ${item.distance}` : item.distance
+                }}
+                  km</span>
+                <div
+                  v-if="item.store.features?.length"
+                  class="text-green-700 font-bold dark:text-green-400"
+                >
+                  {{ item.store.features.join(" ") }}
                 </div>
               </div>
             </div>
           </van-list>
           <div
-            v-if="searchListFinished && searchDisplayList.length === 0 && searchFilteredList.length === 0"
+            v-if="
+              searchListFinished
+                && searchDisplayList.length === 0
+                && searchFilteredList.length === 0
+            "
             class="py-8 text-center text-sm text-gray-500 dark:text-gray-400"
           >
-            {{ list.length ? '未找到相关门店' : '加载中…' }}
+            {{ list.length ? "未找到相关门店" : "加载中…" }}
           </div>
         </div>
       </div>
@@ -863,7 +979,23 @@ function locateToCurrentPosition() {
       <div
         class="w-60 flex flex-col justify-center bg-#fff p3 py6 dark:bg-#1b1b1b dark:text-gray-200"
       >
-        <img class="m-auto h-24 w-24 rounded-2" src="/me.jpg" alt="" loading="lazy">
+        <div class="relative m-auto h-24 w-24">
+          <div
+            v-show="!authorImgLoaded"
+            class="absolute inset-0 flex items-center justify-center rounded-2 bg-gray-200 dark:bg-gray-700"
+          >
+            <div class="i-line-md-loading-loop text-3xl text-gray-400 dark:text-gray-500" />
+          </div>
+          <img
+            ref="authorImgRef"
+            class="h-24 w-24 rounded-2"
+            :class="{ 'opacity-0': !authorImgLoaded }"
+            src="/me.jpg"
+            alt=""
+            loading="lazy"
+            @load="authorImgLoaded = true"
+          >
+        </div>
         <div mt3>
           Author: <span color-pink-3 font-bold>Joie Pink</span>
         </div>
@@ -913,6 +1045,15 @@ function locateToCurrentPosition() {
           </div>
         </div>
       </div>
+    </van-popup>
+
+    <van-popup v-model:show="showPicker" destroy-on-close round position="bottom">
+      <van-picker
+        :model-value="pickerValue"
+        :columns="columns"
+        @cancel="showPicker = false"
+        @confirm="onConfirm"
+      />
     </van-popup>
   </div>
 </template>
