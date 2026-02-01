@@ -8,6 +8,20 @@ const authorPopupShow = ref(false)
 const list = ref([])
 const currentStore = ref({})
 const router = useRouter()
+const pointList = ref([])
+/** 当前视野内的点位，随视口变化更新 */
+const pointsInBounds = ref([])
+/** 点聚合实例，用于视口变化时先销毁再重建 */
+const clusterRef = ref(null)
+
+/** 首屏 loading：进入页即显示，定位完成且地图 complete 后结束 */
+const firstScreenLoading = ref(true)
+const mapReady = ref(false)
+const geolocationDone = ref(false)
+function tryEndFirstScreenLoading() {
+  if (mapReady.value && geolocationDone.value)
+    firstScreenLoading.value = false
+}
 
 /** 百度地图：标点链接（打开后可点「驾车」导航；api 子域 direction 已不可用，用 marker） */
 const baiduNavUrl = computed(() => {
@@ -131,11 +145,19 @@ function onGeolocationComplete(AmapInstance, data) {
   if (!fromSearchStore)
     setMapCenter(center)
   createLocationMarker(AmapInstance, center)
+  geolocationDone.value = true
+  tryEndFirstScreenLoading()
+
+  // 定位后视口变化会触发 moveend，由 loadAndRenderStores 绑定的 updateClusterByViewport 更新聚合
+  if (pointList.value?.length && Amap.value)
+    updateClusterByViewport(Amap.value)
 }
 
 /** 定位失败 */
 function onGeolocationError(data) {
   console.error('定位失败：', data)
+  geolocationDone.value = true
+  tryEndFirstScreenLoading()
 }
 
 /** 请求门店列表，返回带坐标的门店与点位数组 */
@@ -248,20 +270,57 @@ function setupClusterClickZoom(cluster) {
   })
 }
 
-/** 加载门店数据并在地图上渲染点聚合 */
+/** 根据当前视口 bounds 过滤点位，销毁旧聚合并只渲染视野内的点聚合 */
+function updateClusterByViewport(AmapInstance) {
+  if (!map.value || !pointList.value?.length)
+    return
+  const b = map.value.getBounds()
+  if (!b)
+    return
+  const inBounds = pointList.value.filter((point) => {
+    const ll = point.lnglat
+    const lng = Array.isArray(ll) ? ll[0] : (ll?.lng ?? ll?.longitude)
+    const lat = Array.isArray(ll) ? ll[1] : (ll?.lat ?? ll?.latitude)
+    return lng != null && lat != null && b.contains(new AmapInstance.LngLat(lng, lat))
+  })
+  pointsInBounds.value = inBounds
+
+  if (clusterRef.value) {
+    clusterRef.value.setMap(null)
+    clusterRef.value = null
+  }
+  if (!inBounds.length)
+    return
+  const myList = inBounds.map(point => ({
+    lnglat: Array.isArray(point.lnglat) ? point.lnglat : [point.lnglat?.lng ?? point.lnglat?.longitude, point.lnglat?.lat ?? point.lnglat?.latitude],
+    id: point.id,
+  }))
+  const gridSize = 60
+  const cluster = new AmapInstance.MarkerCluster(map.value, myList, {
+    gridSize,
+    renderClusterMarker: createRenderClusterMarker(AmapInstance, myList.length),
+    renderMarker: createRenderStoreMarker(AmapInstance),
+  })
+  setupClusterClickZoom(cluster)
+  clusterRef.value = cluster
+}
+
+/** 是否已绑定视口变化监听，避免重复绑定 */
+let viewportListenersBound = false
+
+/** 加载门店数据，并按当前视口渲染点聚合；绑定 moveend/zoomend 后随视口更新聚合 */
 function loadAndRenderStores(AmapInstance) {
   fetchStoreList()
     .then(({ storeList, points }) => {
       list.value = storeList
-      if (!points.length || !map.value)
-        return
-      const gridSize = 60
-      const cluster = new AmapInstance.MarkerCluster(map.value, points, {
-        gridSize,
-        renderClusterMarker: createRenderClusterMarker(AmapInstance, points.length),
-        renderMarker: createRenderStoreMarker(AmapInstance),
-      })
-      setupClusterClickZoom(cluster)
+      pointList.value = points
+      updateClusterByViewport(AmapInstance)
+      if (map.value && !viewportListenersBound) {
+        viewportListenersBound = true
+        const onViewportChange = useDebounceFn(() => updateClusterByViewport(Amap.value), 150)
+        map.value.on('moveend', onViewportChange)
+        map.value.on('zoomend', onViewportChange)
+      }
     })
     .catch(e => console.error(e))
 }
@@ -326,9 +385,23 @@ onMounted(() => {
       })
 
       initGeolocation(AmapInstance)
-      loadAndRenderStores(AmapInstance)
+
+      map.value.on('complete', () => {
+        const run = () => loadAndRenderStores(AmapInstance)
+        if (typeof requestIdleCallback !== 'undefined') {
+          requestIdleCallback(run, { timeout: 500 })
+        }
+        else {
+          setTimeout(run, 0)
+        }
+        mapReady.value = true
+        tryEndFirstScreenLoading()
+      })
     })
-    .catch(e => console.error(e))
+    .catch((e) => {
+      console.error(e)
+      firstScreenLoading.value = false
+    })
 })
 
 watch(isDark, () => {
@@ -352,6 +425,18 @@ function locateToCurrentPosition() {
 
 <template>
   <div>
+    <!-- 首屏 loading：定位完成且地图 complete 后消失 -->
+    <Transition name="fade">
+      <div
+        v-show="firstScreenLoading"
+        class="fixed inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-white dark:bg-[#1b1b1b]"
+      >
+        <div class="i-line-md-loading-loop text-5xl text-[#00704A] dark:text-green-400" />
+        <div class="text-sm text-gray-600 dark:text-gray-400">
+          加载地图与定位…
+        </div>
+      </div>
+    </Transition>
     <div
       class="h-12 w-full flex items-center justify-between gap-2 bg-white p-2 dark:bg-[#1b1b1b]"
       border="b gray-200 dark:border-gray-700"
@@ -388,7 +473,27 @@ function locateToCurrentPosition() {
         </div>
       </div>
     </div>
-    <div id="container" class="mt-3rem h-[calc(100vh-3rem)] w-full" />
+    <div class="relative mt-3rem h-[calc(100vh-3rem)] w-full">
+      <div id="container" class="absolute inset-0" />
+      <!-- 当前视野内门店数：毛玻璃卡片 -->
+      <Transition name="slide-up">
+        <div
+          v-show="pointList.length > 0"
+          class="absolute bottom-2 right-2 z-20 flex items-center gap-1 border border-white/30 rounded-lg bg-white/40 px-2 shadow-md backdrop-blur-sm dark:border-gray-500/30 dark:bg-gray-900/40"
+        >
+          <div class="min-w-0">
+            <div class="flex items-baseline gap-1.5">
+              <span class="text-lg text-[#00704A] font-bold tabular-nums dark:text-green-400">
+                {{ pointsInBounds.length }}
+              </span>
+              <span class="text-xs text-gray-700 dark:text-gray-300">
+                家门店
+              </span>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </div>
     <van-popup v-model:show="show" :style="{ padding: '20px' }" position="bottom" round>
       <div class="text-xl text-gray-900 font-bold dark:text-gray-100">
         星巴克 ({{ currentStore.name || "--" }})
@@ -449,7 +554,9 @@ function locateToCurrentPosition() {
               <div class="i-carbon-location-filled" />
             </div>
             <div class="min-w-0 flex-1">
-              <div class="text-xs text-gray-800 font-semibold dark:text-gray-200">百度地图</div>
+              <div class="text-xs text-gray-800 font-semibold dark:text-gray-200">
+                百度地图
+              </div>
               <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">打开导航</div>
             </div>
             <div
@@ -469,7 +576,9 @@ function locateToCurrentPosition() {
               <div class="i-carbon-location-filled" />
             </div>
             <div class="min-w-0 flex-1">
-              <div class="text-xs text-gray-800 font-semibold dark:text-gray-200">高德地图</div>
+              <div class="text-xs text-gray-800 font-semibold dark:text-gray-200">
+                高德地图
+              </div>
               <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">打开导航</div>
             </div>
             <div
@@ -540,6 +649,29 @@ function locateToCurrentPosition() {
 <style scoped></style>
 
 <style>
+/* 首屏 loading 淡出 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* 视野内门店数卡片滑入 */
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
 /* 当前位置雷达波纹效果（非 scoped：标记由 AMap 动态插入） */
 .location-radar-wrap {
   position: relative;

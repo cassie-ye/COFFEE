@@ -82,9 +82,6 @@ onMounted(() => {
           <div v-if="isDark" class="i-carbon-sun text-xl text-amber-400" />
           <div v-else class="i-carbon-moon text-xl text-gray-600" />
         </div>
-        <!-- <div class="icon-link" @click="router.push('/')">
-          <div class="i-carbon-location-heart text-xl text-gray-700 dark:text-gray-300" />
-        </div> -->
       </div>
     </div>
     <div
